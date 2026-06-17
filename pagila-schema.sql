@@ -84,6 +84,7 @@ CREATE TABLE public.payment (
     payment_id SERIAL PRIMARY KEY,
     amount numeric(10,2) NOT NULL,
     payment_date timestamp NOT NULL,
+    payment_method VARCHAR(20) NOT NULL,
     staff_id INT NOT NULL
 );
 

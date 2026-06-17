@@ -46,6 +46,7 @@ CATEGORY_NAMES = [
     "Adventure",
 ]
 MAIN_LANGUAGE_CODES = ("en", "es", "fr", "de", "it", "pt")
+PAYMENT_METHODS = ("Mercado Pago", "Efectivo", "Debito", "Credito")
 
 
 fake = Faker("es_AR")
@@ -397,6 +398,7 @@ def main() -> None:
                     str(rental_id),
                     f"{money('2.99', '29.99'):.2f}",
                     sql_ts(rental_date + timedelta(minutes=random.randint(0, 90))),
+                    sql_text(random.choice(PAYMENT_METHODS)),
                     str(staff_id),
                 )
             )
@@ -415,7 +417,7 @@ def main() -> None:
         write_insert(
             handle,
             "payment",
-            ("payment_id", "amount", "payment_date", "staff_id"),
+            ("payment_id", "amount", "payment_date", "payment_method", "staff_id"),
             payment_rows,
         )
 
