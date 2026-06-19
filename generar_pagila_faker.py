@@ -127,25 +127,28 @@ def load_countries(path: str) -> list[dict[str, str]]:
 
 
 def make_countries(source_rows: list[dict[str, str]]):
-    countries = []
-    for row in source_rows:
-        countries.append(
-            (
-                sql_int_or_null(row["country-code"]),
-                sql_text(row["name"][:40]),
-                sql_text(row["alpha-2"][:2]),
-                sql_text(row["alpha-3"][:3]),
-                sql_text(row["region"][:40]),
-                sql_text(row["sub-region"][:40]),
-                sql_text(row["intermediate-region"][:40])
-                if row["intermediate-region"].strip()
-                else "NULL",
-                sql_int_or_null(row["region-code"]),
-                sql_int_or_null(row["sub-region-code"]),
-                sql_int_or_null(row["intermediate-region-code"]),
-            )
+    return [
+        (
+            sql_int_or_null(row["country-code"]),
+            sql_text(row["name"][:40]),
+            sql_text(row["alpha-2"][:2]),
+            sql_text(row["alpha-3"][:3]),
+            sql_int_or_null(row["region-code"]),
         )
-    return countries
+        for row in source_rows
+    ]
+
+
+def make_regions(source_rows: list[dict[str, str]]):
+    regions = {
+        int(row["region-code"]): row["region"][:40]
+        for row in source_rows
+        if row["region-code"].strip() and row["region"].strip()
+    }
+    return [
+        (str(region_code), sql_text(name))
+        for region_code, name in sorted(regions.items())
+    ]
 
 
 def main() -> None:
@@ -157,6 +160,7 @@ def main() -> None:
     city_ids = list(range(1, CITY_COUNT + 1))
     address_count = CUSTOMER_COUNT + STAFF_COUNT + STORE_COUNT
     address_ids = list(range(1, address_count + 1))
+    street_ids = list(range(1, address_count + 1))
     customer_address_ids = address_ids[:CUSTOMER_COUNT]
     staff_address_ids = address_ids[CUSTOMER_COUNT : CUSTOMER_COUNT + STAFF_COUNT]
     store_address_ids = address_ids[CUSTOMER_COUNT + STAFF_COUNT :]
@@ -180,26 +184,22 @@ def main() -> None:
 
         write_insert(
             handle,
+            "region",
+            ("region_code", "region"),
+            make_regions(source_countries),
+        )
+
+        write_insert(
+            handle,
             "country",
-            (
-                "country_code",
-                "name",
-                "alpha_2",
-                "alpha_3",
-                "region",
-                "sub_region",
-                "intermediate_region",
-                "region_code",
-                "sub_region_code",
-                "intermediate_region_code",
-            ),
+            ("country_code", "name", "alpha_2", "alpha_3", "region_code"),
             make_countries(source_countries),
         )
 
         write_insert(
             handle,
             "city",
-            ("city_id", "city", "country_code"),
+            ("city_id", "name", "country_code"),
             (
                 (
                     str(city_id),
@@ -212,22 +212,36 @@ def main() -> None:
 
         write_insert(
             handle,
+            "street",
+            ("street_id", "name", "city_id"),
+            (
+                (
+                    str(street_id),
+                    sql_text(fake.street_name()[:70]),
+                    str(random.choice(city_ids)),
+                )
+                for street_id in street_ids
+            ),
+        )
+
+        write_insert(
+            handle,
             "address",
-            ("address_id", "address", "district", "postal_code", "city_id"),
+            ("address_id", "postal_code", "number", "floor", "unit_number", "street_id"),
             (
                 (
                     str(address_id),
-                    sql_text(fake.street_address()[:70]),
-                    sql_text(fake.province()[:40]),
                     sql_text(fake.postcode()[:30]),
-                    str(random.choice(city_ids)),
+                    str(random.randint(1, 9999)),
+                    str(random.randint(0, 20)) if random.random() < 0.35 else "NULL",
+                    sql_text(f"{random.choice('ABCDEFGH')}{random.randint(1, 20)}")
+                    if random.random() < 0.35
+                    else "NULL",
+                    str(street_ids[address_id - 1]),
                 )
                 for address_id in address_ids
             ),
         )
-
-        handle.write("ALTER TABLE public.staff DISABLE TRIGGER ALL;\n")
-        handle.write("ALTER TABLE public.store DISABLE TRIGGER ALL;\n\n")
 
         write_insert(
             handle,
@@ -274,9 +288,6 @@ def main() -> None:
                 for store_id in range(1, STORE_COUNT + 1)
             ),
         )
-
-        handle.write("ALTER TABLE public.store ENABLE TRIGGER ALL;\n")
-        handle.write("ALTER TABLE public.staff ENABLE TRIGGER ALL;\n\n")
 
         write_insert(
             handle,
@@ -381,11 +392,21 @@ def main() -> None:
         rental_rows = []
         rental_inventory_rows = []
         start_date = datetime(2023, 1, 1, 9, 0, 0)
+        write_insert(
+            handle,
+            "pay_method",
+            ("pay_method_id", "name"),
+            (
+                (str(pay_method_id), sql_text(name))
+                for pay_method_id, name in enumerate(PAYMENT_METHODS, start=1)
+            ),
+        )
+
         for rental_id in range(1, RENTAL_COUNT + 1):
             customer_id = random.randint(1, CUSTOMER_COUNT)
             staff_id = random.randint(1, STAFF_COUNT)
             rental_date = start_date + timedelta(
-                minutes=random.randint(0, 60 * 24 * 365 * 3)
+                minutes=random.randint(0, 60 * 24 * 365 * 3) # 2023 a 2026
             )
             return_date = rental_date + timedelta(days=random.randint(1, 14))
             inventory_id = random.randint(1, INVENTORY_COUNT)
@@ -398,8 +419,8 @@ def main() -> None:
                     str(rental_id),
                     f"{money('2.99', '29.99'):.2f}",
                     sql_ts(rental_date + timedelta(minutes=random.randint(0, 90))),
-                    sql_text(random.choice(PAYMENT_METHODS)),
                     str(staff_id),
+                    str(random.randint(1, len(PAYMENT_METHODS))),
                 )
             )
             rental_rows.append(
@@ -417,7 +438,7 @@ def main() -> None:
         write_insert(
             handle,
             "payment",
-            ("payment_id", "amount", "payment_date", "payment_method", "staff_id"),
+            ("payment_id", "amount", "payment_date", "staff_id", "pay_method_id"),
             payment_rows,
         )
 
@@ -437,6 +458,7 @@ def main() -> None:
 
         for table, column, value in (
             ("city", "city_id", CITY_COUNT),
+            ("street", "street_id", address_count),
             ("address", "address_id", address_count),
             ("staff", "staff_id", STAFF_COUNT),
             ("store", "store_id", STORE_COUNT),
@@ -445,6 +467,7 @@ def main() -> None:
             ("actor", "actor_id", ACTOR_COUNT),
             ("film", "film_id", FILM_COUNT),
             ("inventory", "inventory_id", INVENTORY_COUNT),
+            ("pay_method", "pay_method_id", len(PAYMENT_METHODS)),
             ("payment", "payment_id", RENTAL_COUNT),
             ("rental", "rental_id", RENTAL_COUNT),
         ):
@@ -461,4 +484,5 @@ def main() -> None:
     print(f"Rentas: {RENTAL_COUNT}")
     print(f"Payments: {RENTAL_COUNT} (uno por renta)")
 
-main()
+if __name__ == "__main__":
+    main()
